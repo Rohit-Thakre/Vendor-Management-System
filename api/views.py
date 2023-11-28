@@ -8,7 +8,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework import status
 from .models import Purchase_Order
-from .serializers import PurchaseOrderSerializer, Performance_serializer
+from .serializers import PurchaseOrderSerializer, Performance_serializer, AckSerializer
 
 class VendorView(APIView):
     def get(self, request, id=None):
@@ -92,13 +92,11 @@ class PurchaseOrderView(APIView):
             vendor_po_list = Purchase_Order.objects.filter(vendor=vendor_obj)
             sum = 0
             on_time_delivery = 0
-            avg_response_time = 0
 
             for x in vendor_po_list: 
                 sum += x.quality_rating
                 if x.delivery_date >= x.issue_date: 
                     on_time_delivery += 1
-                avg_response_time += x.issue_date - x.ack_date
 
 
 
@@ -107,7 +105,6 @@ class PurchaseOrderView(APIView):
                 if purchase_order_serializer.data.status == "completed":
                     vendor_obj.quality_rating_avg =  sum / vendor_po_list.count()
                     vendor_obj.on_time_delivery_rate = on_time_delivery / vendor_po_list.count()
-                    vendor_obj.average_response_time = avg_response_time / vendor_po_list.count()
 
                     vendor_obj.save()
                      
@@ -133,3 +130,31 @@ def Performance(request, id):
 
     except: 
         return Response({'msg': 'No data associated with this id'}, status=status.HTTP_404_NOT_FOUND)
+
+@api_view(('GET',))
+def Ack(request, id):
+    if request.method == "POST":
+        try: 
+            po = Purchase_Order.objects.get(id=id)
+            serializer = AckSerializer(po, data=request.data)
+
+            vendor_id = serializer.data.get('vendor')
+            vendor = Vendor.objects.get(id=vendor_id)
+            all_po_of_vendor = Purchase_Order.objects.filter(vendor=vendor)
+
+            
+            diff  = 0
+            for po in all_po_of_vendor: 
+                diff += po.issue_date - serializer.data.get('acknowledgment_date')
+            
+            vendor.average_response_time = diff / all_po_of_vendor.count()
+            vendor.save()
+
+            return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
+
+        except: 
+            return Response({'msg': 'No data associated with this id'}, status=status.HTTP_404_NOT_FOUND)
+
+    else: 
+        return Response({'msg': 'only post method allowed'}, status=status.HTTP_403_FORBIDDEN)
+
