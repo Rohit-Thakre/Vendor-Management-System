@@ -8,10 +8,10 @@ class VendorSerializer(serializers.ModelSerializer):
 
 
 class PurchaseOrderSerializer(serializers.ModelSerializer):
-    vendor = serializers.ReadOnlyField()
     class Meta:
         model = Purchase_Order
         fields = '__all__'
+        
 
 
 class HistoricalPerformanceSerializer(serializers.ModelSerializer):
@@ -28,4 +28,4 @@ class Performance_serializer(serializers.ModelSerializer):
 class AckSerializer(serializers.ModelSerializer): 
     class Meta: 
         model = Purchase_Order
-        fields = ['acknowledgment_date']
+        fields = ['ack_date']

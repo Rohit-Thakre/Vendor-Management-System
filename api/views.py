@@ -10,6 +10,8 @@ from rest_framework import status
 from .models import Purchase_Order
 from .serializers import PurchaseOrderSerializer, Performance_serializer, AckSerializer
 
+from django.db.models import Q
+
 class VendorView(APIView):
     def get(self, request, id=None):
         if id:
@@ -51,7 +53,9 @@ class VendorView(APIView):
             return Response({'msg': 'No data associated with this id'}, status=status.HTTP_404_NOT_FOUND)
 
 
-
+from datetime import datetime,timedelta
+# date_format = "%m/%d/%Y"
+date_format = '%Y-%m-%d %H:%M:%S%z'
 class PurchaseOrderView(APIView):
     def get(self, request, id=None):
         if id:
@@ -80,43 +84,54 @@ class PurchaseOrderView(APIView):
             return Response({'msg': 'Purchase order deleted successfully'}, status=status.HTTP_204_NO_CONTENT)
         except Purchase_Order.DoesNotExist:
             return Response({'msg': 'No data associated with this id'}, status=status.HTTP_404_NOT_FOUND)
-
+    
     def put(self, request, id):
         try:
             purchase_order = Purchase_Order.objects.get(id=id)
             purchase_order_serializer = PurchaseOrderSerializer(purchase_order, data=request.data)
-
-            vendor_name = request.data.get('vendor')
-            vendor_obj = Vendor.objects.filter('name'== vendor_name).first()
-
-            vendor_po_list = Purchase_Order.objects.filter(vendor=vendor_obj)
-            sum = 0
-            on_time_delivery = 0
-
-            for x in vendor_po_list: 
-                sum += x.quality_rating
-                if x.delivery_date >= x.issue_date: 
-                    on_time_delivery += 1
-
-
-
+            
             if purchase_order_serializer.is_valid():
+                old_status = purchase_order.status
                 purchase_order_serializer.save()
-                if purchase_order_serializer.data.status == "completed":
-                    vendor_obj.quality_rating_avg =  sum / vendor_po_list.count()
-                    vendor_obj.on_time_delivery_rate = on_time_delivery / vendor_po_list.count()
 
+                new_status = purchase_order_serializer.data['status']
+                if new_status == "completed":
+                    vendor_name = purchase_order.vendor.name
+                    vendor_obj = Vendor.objects.filter(name=vendor_name).first()
+
+                    vendor_po_list = Purchase_Order.objects.filter(vendor=vendor_obj)
+                    
+
+                    completed_po = Purchase_Order.objects.filter(Q(vendor= vendor_obj) & Q(status='completed') )
+                    completed_po_cnt = completed_po.count()
+                    before_time_delivery_count = 0
+                    sum_quality_rating = 0
+                    # sum_average_response_time = timedelta()
+                    sum_average_response_time = 0
+                    for x in completed_po: 
+
+                        issue_date = datetime.strptime(str(x.issue_date), date_format)
+                        ack_date = datetime.strptime(str(x.ack_date), date_format)
+
+                        diff = issue_date - ack_date 
+                        diff = diff.total_seconds() / 3600 
+                        sum_average_response_time += diff
+
+
+                        if x.expected_delivery_date > x.delivery_date: 
+                            before_time_delivery_count += 1
+                    
+                    vendor_obj.on_time_delivery_rate = before_time_delivery_count / completed_po_cnt
+                    vendor_obj.quality_rating_avg = sum_quality_rating / completed_po_cnt
+                    vendor_obj.average_response_time = sum_average_response_time / completed_po_cnt
+                    vendor_obj.fulfillment_rate = completed_po_cnt / vendor_po_list.count()
                     vendor_obj.save()
-                     
-
-
 
 
                 return Response(purchase_order_serializer.data)
             return Response(purchase_order_serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         except Purchase_Order.DoesNotExist:
             return Response({'msg': 'No data associated with this id'}, status=status.HTTP_404_NOT_FOUND)
-
 
 #  GET/api/vendors/{vendor_id}/performance):
 # POST /api/purchase_orders/{po_id}/acknowledge
@@ -131,29 +146,38 @@ def Performance(request, id):
     except: 
         return Response({'msg': 'No data associated with this id'}, status=status.HTTP_404_NOT_FOUND)
 
-@api_view(('GET',))
+@api_view(( 'POST',))
 def Ack(request, id):
     if request.method == "POST":
-        try: 
-            po = Purchase_Order.objects.get(id=id)
-            serializer = AckSerializer(po, data=request.data)
+        
+        po = Purchase_Order.objects.get(id=id)
+        serializer = AckSerializer(po, data=request.data)
+        if serializer.is_valid():
+            serializer.save()
 
-            vendor_id = serializer.data.get('vendor')
-            vendor = Vendor.objects.get(id=vendor_id)
-            all_po_of_vendor = Purchase_Order.objects.filter(vendor=vendor)
+        vendor_name = po.vendor
+        vendor = Vendor.objects.get(name = po.vendor)
+        all_po_of_vendor = Purchase_Order.objects.filter(vendor=vendor)
 
             
-            diff  = 0
-            for po in all_po_of_vendor: 
-                diff += po.issue_date - serializer.data.get('acknowledgment_date')
+        sum_average_response_time = 0
+        for po in all_po_of_vendor: 
+
+            print('this working')
+            issue_date = datetime.strptime(str(po.issue_date), date_format)
+            ack_date = datetime.strptime(str(po.ack_date), date_format)
+
+            diff = issue_date - ack_date 
+            diff = diff.total_seconds() / 3600 
+            sum_average_response_time += diff
             
-            vendor.average_response_time = diff / all_po_of_vendor.count()
-            vendor.save()
+        vendor.average_response_time = sum_average_response_time / all_po_of_vendor.count()
+        vendor.save()
 
-            return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
+        return Response(serializer.data, status=status.HTTP_202_ACCEPTED)
 
-        except: 
-            return Response({'msg': 'No data associated with this id'}, status=status.HTTP_404_NOT_FOUND)
+        # exc`ept: 
+        #     return Response({'msg': 'No data associated with this id'}, status=status.HTTP_404_NOT_FOUND)
 
     else: 
         return Response({'msg': 'only post method allowed'}, status=status.HTTP_403_FORBIDDEN)
